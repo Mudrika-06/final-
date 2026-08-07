@@ -1,0 +1,7 @@
+streamlit
+google-genai
+pillow
+gTTS
+sentence-transformers
+faiss-cpu
+numpy
