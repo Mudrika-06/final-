@@ -94,7 +94,7 @@ class CopywritingAgent:
         img_converted.save(img_byte_arr, format='JPEG')
         image_part = types.Part.from_bytes(data=img_byte_arr.getvalue(), mime_type='image/jpeg')
 
-        models_to_try = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
+        models_to_try = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash']
         last_exception = None
 
         for model_name in models_to_try:
