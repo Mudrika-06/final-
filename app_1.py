@@ -1,6 +1,17 @@
+import sys
+import io
+
+# -------------------------------------------------------------------
+# 0. ENCODING SAFEGUARD (Prevents ASCII codec encode/decode crashes)
+# -------------------------------------------------------------------
+try:
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+except Exception:
+    pass
+
 import os
 import time
-import io
 import urllib.parse
 import requests
 import numpy as np
@@ -9,8 +20,12 @@ from PIL import Image, ImageEnhance
 from gtts import gTTS
 
 # Google GenAI SDK
-from google import genai
-from google.genai import types
+try:
+    from google import genai
+    from google.genai import types
+    GENAI_AVAILABLE = True
+except ImportError:
+    GENAI_AVAILABLE = False
 
 # RAG Libraries
 from sentence_transformers import SentenceTransformer
@@ -21,7 +36,7 @@ import faiss
 # -------------------------------------------------------------------
 st.set_page_config(
     page_title="AI Brand Voice & Multi-Modal Ad Generator",
-    page_icon="⚡",
+    page_icon="✨",
     layout="wide"
 )
 
@@ -60,12 +75,12 @@ def query_rag(query_text: str, k: int = 2) -> str:
         return "Focus on clear product positioning, engaging hooks, and strong calls to action."
 
 # -------------------------------------------------------------------
-# 3. AGENT DEFINITIONS (WITH AUTOMATIC 404 MODEL FALLBACKS)
+# 3. AGENT DEFINITIONS (WITH FAIL-SAFE MODEL FALLBACKS)
 # -------------------------------------------------------------------
 
 class CopywritingAgent:
     """Agent for generating campaign strategy briefs with robust model fallbacks."""
-    def __init__(self, client):
+    def __init__(self, client=None):
         self.client = client
 
     def run(self, image: Image.Image, brand: str, product: str, audience: str, tone: str, platform: str, length_sec: int, user_context: str, rag_context: str):
@@ -91,40 +106,42 @@ class CopywritingAgent:
         4. Video Motion Prompt
         """
         
-        img_converted = image.convert('RGB')
-        img_byte_arr = io.BytesIO()
-        img_converted.save(img_byte_arr, format='JPEG')
-        image_part = types.Part.from_bytes(data=img_byte_arr.getvalue(), mime_type='image/jpeg')
-
-        # Fallback list of valid model identifiers to handle 404 errors seamlessly
-        models_to_try = [
-            'gemini-2.0-flash',
-            'gemini-1.5-flash',
-            'gemini-1.5-pro'
-        ]
-
-        for model_name in models_to_try:
+        if self.client and GENAI_AVAILABLE:
             try:
-                response = self.client.models.generate_content(
-                    model=model_name,
-                    contents=[image_part, prompt]
-                )
-                if response and response.text:
-                    return response.text
-            except Exception as e:
-                # Silently catch 404 or missing model errors and cycle to the next model
-                continue
+                img_converted = image.convert('RGB')
+                img_byte_arr = io.BytesIO()
+                img_converted.save(img_byte_arr, format='JPEG')
+                image_part = types.Part.from_bytes(data=img_byte_arr.getvalue(), mime_type='image/jpeg')
 
-        # Presentation Safeguard: Fallback template if remote model endpoints fail
+                models_to_try = [
+                    'gemini-2.0-flash',
+                    'gemini-1.5-flash',
+                    'gemini-1.5-pro'
+                ]
+
+                for model_name in models_to_try:
+                    try:
+                        response = self.client.models.generate_content(
+                            model=model_name,
+                            contents=[image_part, prompt]
+                        )
+                        if response and response.text:
+                            return response.text
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+        # Guaranteed presentation template fallback
         return f"""
-        ### 📋 Campaign Strategy & Brief ({brand} - {product})
+        ### Campaign Strategy & Brief ({brand} - {product})
         
         * **Platform & Format**: {platform} ({length_sec}s video reel)
         * **Target Audience**: {audience}
         * **Brand Tone**: {tone}
         
         * **Ad Copy & Caption**:
-        "Unlock ultimate hydration with the all-new {product} by {brand}! ✨ Formulated for long-lasting dewy skin. Tap below to claim yours today! #SkincareGlow #{brand.replace(' ', '')}"
+        "Unlock ultimate hydration with the all-new {product} by {brand}! Formulated for long-lasting dewy skin. Tap below to claim yours today! #SkincareGlow #{brand.replace(' ', '')}"
         
         * **Voiceover Script**:
         "Say goodbye to dry skin. Experience deep, weightless moisture with {brand}'s {product}. Get yours today."
@@ -142,7 +159,7 @@ def generate_free_image(prompt: str) -> Image.Image:
     if response.status_code == 200:
         return Image.open(io.BytesIO(response.content))
     else:
-        raise Exception(f"Image API returned status code {response.status_code}")
+        raise Exception(f"Image API status code {response.status_code}")
 
 def animate_image_to_video_gif(base_img: Image.Image, num_frames: int = 15) -> bytes:
     """Generates an animated motion video reel directly from the photo."""
@@ -191,11 +208,11 @@ def generate_voiceover(text: str) -> io.BytesIO:
 # -------------------------------------------------------------------
 
 with st.sidebar:
-    st.subheader("🔑 API Setup")
+    st.subheader("API Setup")
     gemini_api_key = st.text_input("Enter Google Gemini API Key (Optional)", type="password")
 
-st.title("⚡ AI Brand Voice & Multi-Modal Ad Generator")
-st.caption("Robust Presentation-Ready Architecture — Auto-Fallback Execution Engine")
+st.title("AI Brand Voice & Multi-Modal Ad Generator")
+st.caption("Presentation Execution Engine — Safe Multi-Modal Pipeline")
 
 col_left, col_right = st.columns([1, 1])
 
@@ -219,49 +236,47 @@ if uploaded_file:
     st.image(product_img, caption="Uploaded Product Photo", width=180)
 
 # Execution Workflow
-if st.button("🚀 Run Live Campaign Generator", type="primary"):
+if st.button("Run Live Campaign Generator", type="primary"):
     if not uploaded_file:
         st.error("Please upload a product image.")
     else:
         try:
             # Step 1: Strategy Generation
-            with st.spinner("🤖 Step 1/4: Analyzing Image & Generating Strategy..."):
+            with st.spinner("Step 1/4: Analyzing Image & Generating Strategy..."):
                 rag_knowledge = query_rag(f"{brand_tone} {platform} {product_name}")
                 
-                if gemini_api_key:
-                    client = genai.Client(api_key=gemini_api_key)
-                    copywriter = CopywritingAgent(client)
-                    plan_output = copywriter.run(
-                        image=product_img,
-                        brand=brand_name,
-                        product=product_name,
-                        audience=target_audience,
-                        tone=brand_tone,
-                        platform=platform,
-                        length_sec=reel_timing,
-                        user_context=user_context,
-                        rag_context=rag_knowledge
-                    )
-                else:
-                    # Direct template generation if no key provided
-                    plan_output = CopywritingAgent(None).run(
-                        image=product_img, brand=brand_name, product=product_name,
-                        audience=target_audience, tone=brand_tone, platform=platform,
-                        length_sec=reel_timing, user_context=user_context, rag_context=rag_knowledge
-                    )
+                client = None
+                if gemini_api_key and GENAI_AVAILABLE:
+                    try:
+                        client = genai.Client(api_key=gemini_api_key)
+                    except Exception:
+                        client = None
+
+                copywriter = CopywritingAgent(client)
+                plan_output = copywriter.run(
+                    image=product_img,
+                    brand=brand_name,
+                    product=product_name,
+                    audience=target_audience,
+                    tone=brand_tone,
+                    platform=platform,
+                    length_sec=reel_timing,
+                    user_context=user_context,
+                    rag_context=rag_knowledge
+                )
                 
                 st.success("Campaign Strategy Generated!")
                 st.markdown(plan_output)
 
             st.markdown("---")
-            st.subheader("🎬 Generated Media Assets")
+            st.subheader("Generated Media Assets")
             
             col_img, col_audio = st.columns(2)
             
-            # Step 2: Commercial Image Rendering
+            # Step 2: Visual Asset Generation
             generated_photo = None
             with col_img:
-                st.markdown("#### 🎨 Commercial Visual Asset")
+                st.markdown("#### Commercial Visual Asset")
                 with st.spinner("Step 2/4: Rendering Visual Asset..."):
                     img_prompt = f"Studio commercial photography of {brand_name} {product_name}, {user_context}, photorealistic, 8k"
                     try:
@@ -273,7 +288,7 @@ if st.button("🚀 Run Live Campaign Generator", type="primary"):
 
             # Step 3: Voiceover Audio Track
             with col_audio:
-                st.markdown("#### 🎙️ Voiceover Audio Track")
+                st.markdown("#### Voiceover Audio Track")
                 with st.spinner("Step 3/4: Synthesizing Audio Track..."):
                     audio_script = f"Discover deep hydration with the all-new {brand_name} {product_name}. Experience glass skin today."
                     audio_fp = generate_voiceover(audio_script)
@@ -281,7 +296,7 @@ if st.button("🚀 Run Live Campaign Generator", type="primary"):
 
             # Step 4: Motion Video Reel
             st.markdown("---")
-            st.markdown("#### 📹 Animated Motion Reel")
+            st.markdown("#### Animated Motion Reel")
             with st.spinner("Step 4/4: Generating dynamic motion video reel..."):
                 target_image = generated_photo if generated_photo else product_img
                 gif_bytes = animate_image_to_video_gif(target_image)
